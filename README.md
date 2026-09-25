@@ -1,70 +1,38 @@
 # Agentic RAG
 
-A production architected Retrieval Augmented Generation system with self correcting retrieval loops, cross encoder reranking, and semantic caching. Built with LangGraph, FastAPI, Qdrant, and Redis.
+A production-architected Retrieval-Augmented Generation system with self-correcting retrieval loops, cross-encoder reranking, and semantic caching. Built with LangGraph, FastAPI, Qdrant, and Redis.
 
 ## Overview
 
-Traditional RAG pipelines retrieve once and generate blindly. When retrieval fails, the LLM hallucinates. Agentic RAG treats retrieval as a reasoning loop: analyze, retrieve, grade, rewrite, generate, with confidence gated self correction at every step.
+Traditional RAG pipelines retrieve once and generate blindly. When retrieval fails, the LLM hallucinates. Agentic RAG treats retrieval as a reasoning loop: analyze, retrieve, grade, rewrite, generate, with confidence-gated self-correction at every step.
 
-This system implements a production grade agentic RAG with:
+Key capabilities:
 
-- Stateful agent orchestration via LangGraph, not naive chains
-- Multi query decomposition for complex questions
-- Cross encoder reranking for high precision retrieval
+- Stateful agent orchestration via LangGraph
+- Multi-query decomposition for complex questions
+- Cross-encoder reranking for high-precision retrieval
 - Semantic caching delivering 90x latency reduction on repeat queries
-- Citation grounded generation with confidence scoring
-- Real time streaming via Server Sent Events
+- Citation-grounded generation with confidence scoring
+- Real-time streaming via Server-Sent Events
 
-## Architecture & Data Layer
-![Architecture & Data Layer Diagram](docs/architecture-data-layer.png)
+## Architecture
+
+![Architecture](docs/architecture-data-layer.png)
 
 ## Request Lifecycle
 
 Every query flows through an intelligent, self-correcting pipeline.
 
-### 1. Cache Lookup
-
-Normalized query is hashed with SHA256 and looked up in Redis. A cache hit returns in roughly 80 milliseconds.
-
-### 2. Query Analysis
-
-The LLM analyzes intent, decides the route (retrieve or direct), and decomposes complex questions into one to four focused sub-queries.
-
-Example:
-
-```
-Input:  "Explain FastAPI, Qdrant, and how they work in RAG"
-
-Output: sub_queries = [
-    "What is FastAPI?",
-    "What is Qdrant?",
-    "How do FastAPI and Qdrant work together in a RAG system?"
-]
-```
-
-### 3. Multi-Query Retrieval
-
-For each sub-query, the system performs dense retrieval from Qdrant using BGE-M3 embeddings, de-duplicates results, then applies cross-encoder reranking with BGE-reranker-v2-m3.
-
-### 4. Confidence Grading
-
-An LLM grader evaluates whether the retrieved context is sufficient:
-
-```json
-{ "sufficient": true, "confidence": 0.9, "missing": null }
-```
-
-### 5. Self Correction Loop
-
-If confidence is below 0.6 and retry count is below the maximum, the agent rewrites the query for better retrieval, loops back to step 3, and prevents ungrounded hallucination.
-
-### 6. Grounded Generation
-
-The final answer is generated with inline citations like [1], [2] traced back to source chunks. The response includes a citations array with relevance scores.
+1. **Cache lookup.** Normalized query hashed with SHA256 and checked in Redis. A cache hit returns in roughly 80 milliseconds.
+2. **Query analysis.** The LLM analyzes intent, decides the route (retrieve or direct), and decomposes complex questions into one to four focused sub-queries.
+3. **Multi-query retrieval.** Dense retrieval from Qdrant using BGE-M3 embeddings, followed by cross-encoder reranking with BGE-reranker-v2-m3.
+4. **Confidence grading.** An LLM grader scores context sufficiency on a scale from 0 to 1.
+5. **Self-correction loop.** If confidence drops below 0.6 and retry count is under the maximum, the agent rewrites the query and retries retrieval.
+6. **Grounded generation.** The final answer is generated with inline citations traced back to source chunks.
 
 ## Performance
 
-Verified via `time curl` against the production endpoint:
+Verified via `time curl` against the running endpoint.
 
 | Metric | Value |
 |--------|-------|
@@ -74,83 +42,58 @@ Verified via `time curl` against the production endpoint:
 | Reranker precision | 0.99+ on production queries |
 | Streaming events | 5 SSE event types per request |
 
-Cache performance in practice:
-
-```bash
-$ time curl -X POST http://localhost:8000/chat -d '{"query":"..."}'
-real    0m7.567s   # Cold, full pipeline
-
-$ time curl -X POST http://localhost:8000/chat -d '{"query":"..."}'
-real    0m0.083s   # Cached, 91x speedup
-```
-
 ## Key Features
 
 ### Agentic Reasoning
-
 - LangGraph state machine instead of naive sequential chains
 - Self-correcting loop that retries with rewritten queries when confidence drops
 - Multi-query decomposition of one complex query into focused sub-queries
 - Intent routing that distinguishes retrieval from direct-answer paths
 
 ### Advanced Retrieval
-
-- Dense vector search using BGE-M3 multilingual embeddings (1024 dimensions)
+- Dense vector search using BGE-M3 multilingual embeddings
 - Cross-encoder reranking with joint query-document scoring
-- Multi-query aggregation with deduplication across sub-query results
-- Metadata filtering for scoped retrieval by source or type
+- Multi-query aggregation with deduplication
+- Metadata filtering for scoped retrieval
 
 ### Answer Quality
-
-- Citation tracking, every claim traced back to a source chunk
-- Confidence scoring through a grader LLM that evaluates context sufficiency
+- Citation tracking, every claim traced to a source chunk
+- Confidence scoring through a grader LLM
 - Hallucination guard that refuses to answer when context is insufficient
-- Grounding enforced through prompts that say "answer only from context"
+- Grounding enforced through prompts
 
 ### Production Patterns
-
-- Semantic caching with SHA256 keys, 1 hour TTL, and 90x repeat-query speedup
-- Session memory backed by Redis with 24 hour TTL and last 20 messages
-- SSE streaming with node-level progress events for real-time UX
-- Structured logging where every node emits structured events
-- Health checks through `/health` with dependency status
+- Semantic caching with SHA256 keys and 1 hour TTL
+- Session memory backed by Redis with 24 hour TTL
+- SSE streaming with node-level progress events
+- Structured logging across every agent node
+- Health checks with dependency status
 - Containerized deployment via Docker Compose
 
 ## Technology Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| API | FastAPI + Uvicorn | Async HTTP and SSE streaming |
-| Agent | LangGraph | Stateful multi-step orchestration |
-| Vector DB | Qdrant | Dense similarity search |
-| Embeddings | BAAI/bge-m3 | Multilingual 1024-dim embeddings |
-| Reranker | BAAI/bge-reranker-v2-m3 | Cross-encoder precision |
-| Cache and Memory | Redis 7 | Semantic cache and session state |
-| LLM | Groq / OpenAI | Task-routed inference |
-| Orchestration | Docker Compose | Multi-service deployment |
-| Observability | Langfuse (optional) | Request tracing |
+| Layer | Technology |
+|-------|-----------|
+| API | FastAPI + Uvicorn |
+| Agent | LangGraph |
+| Vector DB | Qdrant |
+| Embeddings | BAAI/bge-m3 |
+| Reranker | BAAI/bge-reranker-v2-m3 |
+| Cache and Memory | Redis 7 |
+| LLM | Groq / OpenAI |
+| Orchestration | Docker Compose |
 
 ## Design Decisions
 
-### Why LangGraph over LangChain Agents
+**Why LangGraph over LangChain Agents.** LangGraph provides explicit state, cyclic graphs, and testable nodes. Every transition is a first-class edge, which matters for debugging and reliability.
 
-LangGraph provides explicit state, cyclic graphs, and testable nodes. Naive agents hide control flow, while LangGraph makes every transition a first-class edge. This is critical for debugging and production reliability.
+**Why cross-encoder reranking.** Dense retrieval optimizes for recall. Cross-encoders optimize for precision by jointly scoring query and document. Combined, we get recall from Qdrant and precision from the reranker. Typical precision gain is 15 to 25 percent over vector-only retrieval.
 
-### Why Cross-Encoder Reranking
+**Why self-correction.** LLMs hallucinate when retrieval fails. Instead of trusting a single pass, we grade confidence and retry with rewritten queries when the context is weak.
 
-Dense retrieval optimizes for recall, meaning it gets everything relevant. Cross-encoders optimize for precision, meaning they rank the best first by jointly scoring query and document. Combined, we get recall from Qdrant and precision from the reranker. Typical precision gain is 15 to 25 percent over vector-only retrieval.
+**Why semantic caching.** Production RAG traffic is heavy-tailed. A small set of queries dominates volume. Query-level caching delivers 90x speedup on repeats with 1 hour TTL.
 
-### Why Self-Correction
-
-LLMs hallucinate when retrieval fails. Instead of trusting a single retrieval pass, we grade confidence and retry with rewritten queries when the context is weak. This trades latency for correctness, which is the right call for high-stakes answers.
-
-### Why Semantic Caching
-
-Production RAG traffic is heavy-tailed. A small set of queries dominates the total volume. Caching at the query level delivers 90x speedup on repeats with a 1 hour TTL, freeing CPU for novel queries.
-
-### Why Confidence-Gated Refusal
-
-It is better to say "I don't know" than to hallucinate. When confidence stays below 0.6 after maximum retries, the system returns a refusal instead of a fabricated answer. This was verified with off-domain queries such as "What is the population of Mars?"
+**Why confidence-gated refusal.** It is better to say "I don't know" than to hallucinate. Verified with off-domain queries such as "What is the population of Mars?"
 
 ## API Surface
 
@@ -162,55 +105,29 @@ It is better to say "I don't know" than to hallucinate. When confidence stays be
 | GET | /health | Health and indexed docs count |
 | GET | /docs | Interactive Swagger UI |
 
-### Streaming Event Contract
-
-```
-data: {"type": "step", "node": "analyze", "sub_queries": [...]}
-data: {"type": "step", "node": "retrieve", "docs": 3}
-data: {"type": "step", "node": "grade", "confidence": 0.9}
-data: {"type": "answer", "data": "...", "citations": [...]}
-data: {"type": "done", "latency_ms": 2456.7}
-```
+Streaming event contract:
 
 ## Roadmap
 
-### Short-Term
-
 - API key authentication and rate limiting
-- RAGAS evaluation suite covering faithfulness and relevancy
+- RAGAS evaluation suite
 - Hybrid retrieval with BM25 and dense fusion
 - Prometheus metrics and Grafana dashboard
-- Integration test suite with over 70 percent coverage
-
-### Mid-Term
-
-- Async graph execution using ainvoke
+- Async graph execution
 - GPU inference or API-based embeddings
-- Multi-tenant architecture with per-tenant indexes
-- Feedback collection and A/B prompt testing
-- Semantic cache using embedding similarity
-
-### Long-Term
-
-- Kubernetes Helm charts
-- Cost tracking and budget alerts
-- Guardrails for PII redaction and output filtering
-- Distributed Qdrant and Redis Cluster
-- Web UI built with Next.js and streaming
+- Multi-tenant architecture
+- Web UI built with Next.js
 
 ## Engineering Notes
 
-### Debugging Journey
-
 This project was hardened through 22 production bugs, from LangGraph state management to Pydantic schema mismatches. Each fix is documented in commit history and reflects real-world integration challenges.
 
-### Tested Edge Cases
+Tested edge cases:
 
-- Off-domain query such as "What is the population of Mars?" correctly refuses instead of hallucinating
-- Complex multi-part query decomposes into 3 sub-queries and retrieves from multiple sources
+- Off-domain query correctly refuses instead of hallucinating
+- Complex multi-part query decomposes into 3 sub-queries
 - Cache hit path shows 90x speedup verified with `time curl`
 - Session memory persists multi-turn conversations in Redis
-- Confidence loop recursively rewrites queries bounded by MAX_RETRIES
 
 ## License
 
@@ -218,4 +135,4 @@ MIT License. See LICENSE for details.
 
 ## Acknowledgments
 
-Built with LangGraph, Qdrant, FastAPI, and open-source embedding models from BAAI.# agentic-rag-langgraph
+Built with LangGraph, Qdrant, FastAPI, and open-source embedding models from BAAI.
