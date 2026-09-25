@@ -1,0 +1,10 @@
+[
+  {
+    "question": "What is FastAPI?",
+    "ground_truth": "FastAPI is a modern Python web framework for building APIs."
+  },
+  {
+    "question": "What vector database is used in this project?",
+    "ground_truth": "Qdrant is used as the vector database."
+  }
+]
