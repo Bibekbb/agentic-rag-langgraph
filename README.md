@@ -16,7 +16,7 @@ This system implements a production grade agentic RAG with:
 - Real time streaming via Server Sent Events
 
 ## Architecture & Data Layer
-![Architecture Diagram](docs/architecture.png)
+![Architecture & Data Layer Diagram](docs/architecture-data-layer.png)
 
 ## Request Lifecycle
 
